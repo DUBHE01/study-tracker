@@ -93,6 +93,42 @@ body {
 .progress-text { text-align: center; font-size: 13.5px; color: var(--sub); margin-top: 8px; }
 .progress-text b { color: var(--text); }
 
+/* 圆形进度环 */
+.progress-ring-wrap { display: flex; justify-content: center; margin-top: 18px; }
+.progress-ring { width: 128px; height: 128px; }
+.progress-ring .ring-bg { fill: none; stroke: #f0eee9; stroke-width: 11; }
+.progress-ring .ring-fg { fill: none; stroke-width: 11; stroke-linecap: round; transition: stroke-dashoffset .7s ease, stroke .3s; transform: rotate(-90deg); transform-origin: 50% 50%; }
+.progress-ring .ring-num { font-size: 34px; font-weight: 800; fill: var(--text); }
+.progress-ring .ring-sub { font-size: 13px; fill: var(--sub); }
+.progress-ring.pass .ring-num { fill: var(--green-dark); }
+
+/* 达标动效 */
+@keyframes flame-bounce { 0%,100% { transform: scale(1) rotate(0deg); } 30% { transform: scale(1.18) rotate(-4deg); } 60% { transform: scale(1.1) rotate(3deg); } }
+.banner.green .b-icon .ic, .banner.gold .b-icon .ic { animation: flame-bounce .9s ease-in-out infinite; transform-origin: 50% 80%; }
+@keyframes checkbox-pop { 0% { transform: scale(.6); } 60% { transform: scale(1.2); } 100% { transform: scale(1); } }
+.checkbox-wrap input:checked + .checkbox-custom { animation: checkbox-pop .3s ease; }
+.task-row.done .checkbox-custom { animation: checkbox-pop .3s ease; }
+
+/* 管理端柱状图 + 热力图 */
+.week-chart { display: flex; align-items: flex-end; gap: 10px; height: 120px; margin-bottom: 6px; }
+.week-chart .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
+.week-chart .bar { width: 100%; max-width: 34px; border-radius: 8px 8px 4px 4px; background: #e5e7eb; transition: height .5s ease; min-height: 4px; }
+.week-chart .bar.pass { background: linear-gradient(180deg,#34d399,#059669); }
+.week-chart .bar.partial { background: linear-gradient(180deg,#fcd34d,#f59e0b); }
+.week-chart .bar-label { font-size: 11px; color: var(--sub); }
+.week-chart .bar-num { font-size: 11px; font-weight: 700; color: var(--text); }
+.month-heat { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 6px; }
+.month-heat .heat-cell { aspect-ratio: 1; border-radius: 5px; background: #f0eee9; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #b0aca3; min-height: 22px; }
+.month-heat .heat-cell.l0 { background: #f0eee9; color: #b0aca3; }
+.month-heat .heat-cell.l1 { background: #fde68a; color: #92400e; }
+.month-heat .heat-cell.l2 { background: #86efac; color: #14532d; }
+.month-heat .heat-cell.l3 { background: #34d399; color: #064e3b; }
+.month-heat .heat-cell.l4 { background: #059669; color: #fff; }
+.month-heat .heat-cell.blank { background: transparent; color: transparent; }
+.heat-legend { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; color: var(--sub); }
+.heat-legend .lg { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+
 /* 按钮 */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 12px 20px; border: none; border-radius: 14px; font-size: 15.5px; font-weight: 700; cursor: pointer; transition: all .18s; font-family: var(--font); text-align: center; }
 .btn:active { transform: scale(.97); }
@@ -756,8 +792,18 @@ function renderStudent(app) {
     }
     h += '</div>';
   });
-  h += '<div class="progress-bar-wrap"><div class="progress-bar" style="width:' + (cnt / 6 * 100) + '%"></div></div>';
-  h += '<div class="progress-text">已完成 <b>' + cnt + '</b> / 6 科 · 完成 2 科 = 今日达标</div>';
+  var ringR = 50, ringC = 2 * Math.PI * ringR;
+  var ringPct = cnt / 6;
+  var ringOffset = ringC * (1 - ringPct);
+  var ringColor = cnt >= 2 ? '#059669' : (cnt === 1 ? '#f59e0b' : '#e5e7eb');
+  h += '<div class="progress-ring-wrap">';
+  h += '<svg class="progress-ring' + (cnt >= 2 ? ' pass' : '') + '" viewBox="0 0 120 120" aria-label="已完成 ' + cnt + ' / 6">';
+  h += '<circle class="ring-bg" cx="60" cy="60" r="' + ringR + '"/>';
+  h += '<circle class="ring-fg" cx="60" cy="60" r="' + ringR + '" stroke="' + ringColor + '" stroke-dasharray="' + ringC.toFixed(2) + '" stroke-dashoffset="' + ringOffset.toFixed(2) + '"/>';
+  h += '<text class="ring-num" x="60" y="58" text-anchor="middle">' + cnt + '</text>';
+  h += '<text class="ring-sub" x="60" y="78" text-anchor="middle">/ 6</text>';
+  h += '</svg></div>';
+  h += '<div class="progress-text">' + (cnt >= 2 ? '<b style="color:var(--green-dark)">今日达标！继续加油</b>' : '完成 2 科 = 今日达标') + '</div>';
   h += '</div>';
 
   if (DEEPSEEK_URL) {
@@ -1159,9 +1205,15 @@ window._setReviewFilter = function (f) {
 };
 
 var expandedDates = {};   // 展开状态：{ '20260815': true, ... }
+var reviewVisible = 14;   // 审核面板懒加载：初始显示的天数
 
 window._toggleExpand = function (date) {
   expandedDates[date] = !expandedDates[date];
+  render();
+};
+
+window._loadMore = function () {
+  reviewVisible += 14;
   render();
 };
 
@@ -1199,10 +1251,16 @@ function renderReviewPanel() {
          '</div>';
   } else {
     h += '<div class="db-list">';
-    dates.forEach(function (date) {
+    dates.slice(0, reviewVisible).forEach(function (date) {
       h += renderReviewDayCard(date);
     });
     h += '</div>';
+    if (reviewVisible < totalDays) {
+      var remaining = totalDays - reviewVisible;
+      h += '<div style="text-align:center;margin-top:12px;">';
+      h += '<button class="btn btn-outline btn-sm" onclick="window._loadMore()">' + icon('download') + '加载更多（还有 ' + remaining + ' 天）</button>';
+      h += '</div>';
+    }
   }
 
   h += '</div>';
@@ -1340,15 +1398,31 @@ function renderAdmin(app) {
 
   /* 底部通栏：最近 7 天 + 说明 + 配置云端 */
   h += '<div class="admin-full">';
-  h += '<div class="stat-card"><h3>' + icon('calendar') + '最近 7 天打卡进度</h3><div class="day-grid">';
+  h += '<div class="stat-card"><h3>' + icon('calendar') + '最近 7 天打卡进度</h3><div class="week-chart">';
   for (var i = 6; i >= 0; i--) {
     var dt = new Date(); dt.setDate(dt.getDate() - i);
     var ds = '' + dt.getFullYear() + pad(dt.getMonth() + 1) + pad(dt.getDate());
     var dd = all[ds];
     var n = dd ? dd.tasks.filter(function (t) { return t.completed; }).length : 0;
-    h += '<div class="day-cell s-color-' + n + '"><div class="dn">' + n + '</div><div class="dd">/6</div><div class="dc">' + ds.slice(4, 6) + '/' + ds.slice(6) + '</div></div>';
+    var barCls = n >= 2 ? ' pass' : (n === 1 ? ' partial' : '');
+    h += '<div class="bar-col"><div class="bar-num">' + n + '</div><div class="bar' + barCls + '" style="height:' + Math.max((n / 6) * 100, 4) + '%"></div><div class="bar-label">' + ds.slice(4, 6) + '/' + ds.slice(6) + '</div></div>';
   }
-  h += '</div><div class="admin-note">连接云端后，这里显示所有设备的打卡记录（学生端打卡会自动同步过来）。未连接云端时只显示本机浏览器保存的数据。</div></div>';
+  h += '</div>';
+  h += '<h3 style="margin-top:20px;">' + icon('flame') + '本月打卡热力图</h3><div class="month-heat">';
+  var hNow = new Date();
+  var hY = hNow.getFullYear(), hM = hNow.getMonth();
+  var hFirst = new Date(hY, hM, 1).getDay();
+  var hDays = new Date(hY, hM + 1, 0).getDate();
+  for (var k = 0; k < hFirst; k++) h += '<div class="heat-cell blank"></div>';
+  for (var hd = 1; hd <= hDays; hd++) {
+    var ds2 = '' + hY + pad(hM + 1) + pad(hd);
+    var d2 = all[ds2];
+    var n2 = d2 ? d2.tasks.filter(function (t) { return t.completed; }).length : 0;
+    var lvl = n2 >= 6 ? 'l4' : (n2 >= 4 ? 'l3' : (n2 >= 2 ? 'l2' : (n2 >= 1 ? 'l1' : 'l0')));
+    h += '<div class="heat-cell ' + lvl + '" title="' + fmtDate(ds2) + ' 完成 ' + n2 + '/6">' + hd + '</div>';
+  }
+  h += '</div><div class="heat-legend">少 <span class="lg" style="background:#f0eee9"></span><span class="lg" style="background:#fde68a"></span><span class="lg" style="background:#86efac"></span><span class="lg" style="background:#34d399"></span><span class="lg" style="background:#059669"></span> 多</div>';
+  h += '<div class="admin-note">连接云端后，这里显示所有设备的打卡记录（学生端打卡会自动同步过来）。未连接云端时只显示本机浏览器保存的数据。</div></div>';
 
   h += '<div class="card"><div style="font-weight:700;font-size:14px;margin-bottom:10px;">📖 使用说明</div><div class="admin-note">';
   h += '· 数据保存在使用设备的本地，离线也能用<br>';
