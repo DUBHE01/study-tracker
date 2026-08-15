@@ -139,6 +139,19 @@ details.a-box[open] summary::before { transform: rotate(90deg); }
 details.a-box .a-body { margin-top: 8px; line-height: 1.8; white-space: pre-wrap; color: #3d3a35; }
 .ai-time { text-align: right; font-size: 11px; color: #d0ccc3; margin-top: 4px; }
 
+/* 追问区 */
+.followup-wrap { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.followup-q { background: #eff6ff; border-radius: 12px 12px 4px 12px; padding: 10px 14px; font-size: 14px; color: #1d4ed8; margin-bottom: 8px; word-break: break-word; display: flex; gap: 8px; align-items: flex-start; }
+.followup-q .ic { width: 15px; height: 15px; color: var(--blue); flex-shrink: 0; margin-top: 2px; }
+.followup-a { background: #f5f3ff; border-radius: 4px 12px 12px 12px; padding: 10px 14px; font-size: 14px; color: #3d3a35; margin-bottom: 12px; word-break: break-word; line-height: 1.75; display: flex; gap: 8px; align-items: flex-start; }
+.followup-a .ic { width: 15px; height: 15px; color: var(--purple); flex-shrink: 0; margin-top: 2px; }
+.followup-input { display: flex; gap: 8px; align-items: stretch; }
+.followup-input input { flex: 1; padding: 11px 14px; border: 2px solid var(--border); border-radius: 12px; font-size: 14px; font-family: var(--font); background: #fff; }
+.followup-input input:focus { outline: none; border-color: var(--purple); }
+.followup-input input:disabled { background: #f5f4f0; color: var(--sub); }
+.followup-input .btn { min-height: 44px; padding: 0 18px; font-size: 14px; flex-shrink: 0; }
+.followup-loading { text-align: center; color: var(--sub); font-size: 13px; padding: 8px 0; }
+
 /* 底部弹窗（Bottom Sheet） */
 .sheet-mask { position: fixed; inset: 0; background: rgba(30,28,24,.42); display: flex; align-items: flex-end; justify-content: center; z-index: 200; animation: fadein .2s ease; }
 @keyframes fadein { from { opacity: 0 } to { opacity: 1 } }
@@ -764,7 +777,7 @@ function renderStudent(app) {
 }
 
 /* ================= AI 反馈 ================= */
-var AI_SYSTEM = '你是一个陪高中生学习的朋友，语气自然、温暖、口语化。对方就是你的普通朋友，请用"你"来称呼 ta，别端起老师批作业的架子，也别用打分、评判的语气。\n\n对方在打卡页写下了今天各科"学到了什么"，内容如下。请像朋友聊天一样读一读，然后：\n1. 用两三句话聊聊 ta 今天学了什么（自然一点，顺便肯定一下）\n2. 如果 ta 写的知识点里有说错的地方，友善地指出来，用大白话解释清楚\n3. 把 ta 学到的这些知识点之间的联系、规律和底层逻辑串起来，让 ta 觉得知识是相通的\n4. 给 ta 2-3 个有意思的启发性问题，引导 ta 自己思考；每个问题配一个参考答案，但所有问题放前面，所有参考答案放最后\n\n只输出 JSON，不要输出其他任何内容，格式：{"summary":"...","corrections":["..."],"insights":"...","questions":[{"q":"...","a":"..."}]}。corrections 没有就留空数组。全用简体中文。';
+var AI_SYSTEM = '你是一位既懂教学、又懂高考的"学习教练"，也是 ta 亲近的学习伙伴。语气自然、温暖、口语化，用"你"称呼 ta，不评判、不打分、不摆老师架子。\n\n对方是一名中国高中生，在打卡页写下了今天各科"学到了什么"（可能是数学、物理、化学、生物、语文、英语中的若干科）。请像靠谱的朋友一样读一读，再完成下面的任务。\n\n【三条铁律】\n1. 术语规范：严格使用高中教材标准术语。数学里向量的"数量积"（也叫内积），不要用"点积"这种口语/英文直译；"叉乘/向量积/叉积"是大学内容、不在高中考纲，除非明确标注"大学拓展"否则不要提。物理、化学、生物同理，用教材原话。\n2. 考纲对齐：以高中课标和高考要求为准。可适度拓展，但必须：(a) 明确标注"拓展/大学视角"；(b) 紧扣 ta 正在学的知识，不跑偏到无关领域；(c) 优先讲清"这个知识点在高考里怎么考、怎么用、有哪些易错点"。\n3. 重方法胜过重答案：帮 ta 提炼背后的思维方法，而不是只给结论。\n\n【分科策略：先判断每科属于理科还是文科，套用对应重点】\n\n理科（数学、物理、化学、生物）：\n· 纠错重点：概念是否精确、推理/计算/符号是否出错、术语是否规范；\n· 思想方法（拓展时从中提炼）：\n  数学——函数与方程、数形结合、分类讨论、转化与化归、整体代换、特殊与一般；\n  物理——建模、守恒、图像分析、控制变量、微元/极限；\n  化学——守恒（质量/电荷/电子）、平衡、结构决定性质、分类比较；\n  生物——结构与功能相适应、稳态与反馈调节、实验对照与变量控制；\n· 拓展方向：从具体知识点提炼"可迁移的思想方法"，一句话点破"以后遇到什么情况还能用"；\n· 提问侧重：元认知（你当时是怎么想的？卡在哪一步？）+ 迁移（换个条件/情境还成立吗？）。\n\n文科（语文、英语）：\n· 纠错重点：理解是否准确（主旨/细节/情感理解偏差）、表达是否清晰（逻辑通不通、用词准不准）、是否言之有据；\n· 思维重点（拓展时从中提炼）：\n  语文——信息整合与概括、论证结构（论点-论据-论证）、批判性思维（多角度、有理有据）、审美鉴赏（意象/手法/情感）、写作立意与结构；\n  英语——语篇理解（主旨/推断/观点态度）、上下文逻辑连贯、跨文化视角、表达准确连贯得体；\n· 拓展方向：从阅读/写作提炼"怎么读得准、怎么写得好"的策略；\n· 提问侧重：理解类（作者为什么这么写/说？言外之意是什么？）+ 表达类（如果是你，会怎么立意/表达？）。\n\n【任务：按顺序完成（今天涉及的每科都要覆盖到）】\n\n一、回顾（summary）：\n用 2-3 句自然的话，复述 ta 今天学到的核心内容（证明你读懂了），再真诚地、具体地肯定 ta 做得好的地方（不要空泛的"很棒"）。\n\n二、纠错（corrections）：\n如果有错，友善指出，并先判断错误类型，再对症解释：\n- 概念性错误（理解偏了）→ 用大白话 + 生活比喻重新讲清楚；\n- 程序性错误（步骤、计算、符号错了）→ 指出具体哪一步、为什么错；\n- 表述不规范（术语或符号用错）→ 给出标准说法。\n用大白话，别堆术语。如果没错，corrections 留空数组。\n\n三、拓展（insights）：\n按上面的【分科策略】，从 ta 今天学的内容里提炼 1-2 个"元思维/元模型"（或文科的"阅读/写作策略"），并用一句话点破"以后遇到什么情况还能用"。尽量建立"触类旁通"的真实联系（例如向量的数量积 ↔ 物理里的功 W=F·s·cosθ），不要生拉硬拽。控制在 100 字左右。\n\n四、思考题（questions）：\n给 ta 2-3 个能引导 ta 自己思考的问题，按【分科策略】选类型（理科：元认知+迁移；文科：理解+表达）。每个问题配一个简短的参考答案，但所有问题放前面，所有参考答案放最后。\n\n【输出格式】\n只输出 JSON，不要输出任何其他内容：\n{"summary":"...","corrections":["..."],"insights":"...","questions":[{"q":"...","a":"..."}]}\ncorrections 没有就留空数组。全部用简体中文。';
 
 function buildUserPrompt(date) {
   var d = dayGet(date);
@@ -815,6 +828,65 @@ function callAI(date) {
     markDirtyAndSync(date);
   });
 }
+
+/* 追问场景的 system prompt：一对一答疑，口语化、大白话 */
+var FOLLOWUP_SYSTEM = '你是一位既懂教学、又懂高考的"学习教练"，正在和一个高中生进行一对一答疑。语气自然、温暖、口语化，用"你"称呼 ta，不评判、不打分。\n\n背景：ta 刚才打卡写下了今天各科"学到了什么"，你已经给过一次反馈（回顾、纠错、拓展、思考题）。现在 ta 针对反馈里的某个点有困惑，来追问你。\n\n请针对 ta 的困惑，用大白话、结合生活例子，把这个问题讲清楚。术语用高中教材的标准说法。回答要简洁、直接、好懂，一般 2-4 句话，别长篇大论。如果 ta 问"为什么""怎么回事"，就从原理/直觉讲；如果问"怎么用""怎么做"，就给方法/步骤。\n\n只输出你的回答正文，不要任何前缀、不要 JSON。';
+
+/* 追问：带完整上下文（笔记 + 原反馈 + 追问历史 + 新问题）调 AI */
+function callFollowup(date, question) {
+  var d = dayGet(date);
+  var ctrl = new AbortController();
+  var timer = setTimeout(function () { ctrl.abort(); }, 60000);
+
+  var msgs = [
+    { role: 'system', content: FOLLOWUP_SYSTEM },
+    { role: 'user', content: '我今天打卡的笔记：\n' + buildUserPrompt(date) },
+    { role: 'assistant', content: '我之前给你的反馈：\n' + (d.analysis ? (d.analysis.summary || '') : '') }
+  ];
+  var followups = (d.analysis && d.analysis.followups) || [];
+  followups.forEach(function (f) {
+    msgs.push({ role: 'user', content: f.q });
+    msgs.push({ role: 'assistant', content: f.a });
+  });
+  msgs.push({ role: 'user', content: question });
+
+  return fetch(DEEPSEEK_URL, {
+    method: 'POST', signal: ctrl.signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: DEEPSEEK_MODEL, messages: msgs, max_tokens: 800, temperature: 0.7, stream: false })
+  }).then(function (resp) {
+    if (!resp.ok) { return resp.text().then(function () { throw new Error('AI 服务暂时不可用（' + resp.status + '）'); }); }
+    return resp.json();
+  }).then(function (j) {
+    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+  });
+}
+
+window._askFollowup = function () {
+  var input = document.getElementById('followupInput');
+  if (!input) return;
+  var q = input.value.trim();
+  if (!q) { showToast('先把你的问题打出来哦'); return; }
+  var d = dayGet(curDate);
+  if (d.followupLoading) return;
+  d.followupLoading = true;
+  lsSave();
+  renderAI();
+  callFollowup(curDate, q).then(function (answer) {
+    d.followupLoading = false;
+    if (!d.analysis) d.analysis = { summary: '', corrections: [], insights: '', questions: [] };
+    if (!d.analysis.followups) d.analysis.followups = [];
+    d.analysis.followups.push({ q: q, a: answer || '（AI 没答出来，再试一次）', ts: new Date().toISOString() });
+    lsSave();
+    markDirtyAndSync(curDate);
+    renderAI();
+  }).catch(function (e) {
+    d.followupLoading = false;
+    lsSave();
+    renderAI();
+    showToast('追问失败：' + (e && e.message ? e.message : e));
+  });
+};
 
 /* 每完成一科就分析：只要有已完成的笔记即触发；分析进行中又来新笔记则标记待补，跑完自动再跑一次 */
 function maybeAnalyze(date, force) {
@@ -868,6 +940,23 @@ function renderAI() {
       h += '</div>';
     }
     h += '<div class="ai-time">生成于 ' + (a.createdAt ? a.createdAt.slice(0, 16).replace('T', ' ') : '') + '</div>';
+
+    /* 追问区：历史 + 输入框 */
+    h += '<div class="followup-wrap">';
+    var followups = a.followups || [];
+    followups.forEach(function (f) {
+      h += '<div class="followup-q">' + icon('lightbulb') + escapeHtml(f.q) + '</div>';
+      h += '<div class="followup-a">' + icon('bot') + escapeHtml(f.a) + '</div>';
+    });
+    if (d.followupLoading) {
+      h += '<div class="followup-loading">正在想，稍等…</div>';
+    } else {
+      h += '<div class="followup-input">';
+      h += '<input type="text" id="followupInput" placeholder="还有不懂的？继续问我" maxlength="200" onkeydown="if(event.key===\'Enter\')window._askFollowup()">';
+      h += '<button class="btn btn-blue" onclick="window._askFollowup()">追问</button>';
+      h += '</div>';
+    }
+    h += '</div>';
   } else if (d.aiError) {
     h += '<div class="ai-hint">AI 暂时开小差了：' + escapeHtml(d.aiError) + '<br><button class="btn btn-sm btn-outline" style="margin-top:10px" onclick="window._refreshAI()">再试一次</button></div>';
   } else if (cnt < 1) {
