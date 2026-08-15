@@ -342,8 +342,8 @@ details.a-box .a-body { margin-top: 8px; line-height: 1.8; white-space: pre-wrap
 var SUPABASE_URL = 'https://cdsoorfsipczlukqcozq.supabase.co';     // Supabase 项目地址
 var SUPABASE_KEY = 'sb_publishable_QiLYLjpD4wrvP4YI6xpInA_HSIjsVLQ';   // Publishable key（前端公开用，非机密）
 var SUPABASE_TABLE = 'daily_tasks';
-var DEEPSEEK_KEY = '';   // 已移除：DeepSeek key 不能放公开仓库（GitHub 密钥扫描会拦截）。恢复 AI 反馈需后端代理，见 memory。
-var DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions';
+var DEEPSEEK_KEY = '';   // 已废弃：key 移到后端代理（Cloudflare Worker）
+var DEEPSEEK_URL = 'https://odd-art-9427.qq3319193364.workers.dev/';   // AI 后端代理地址（非空 = AI 启用）
 var DEEPSEEK_MODEL = 'deepseek-chat';
 var FLOMO_URL = 'https://flomoapp.com/iwh/MjgwOTQ0Mw/dd818d37121cd049f93f042f33f1b1e9/';   // flomo webhook
 var FLOMO_TAG = '#学习打卡';   // flomo 标签：筛选/隐藏用，不混入灵感笔记
@@ -747,13 +747,13 @@ function renderStudent(app) {
   h += '<div class="progress-text">已完成 <b>' + cnt + '</b> / 6 科 · 完成 2 科 = 今日达标</div>';
   h += '</div>';
 
-  if (DEEPSEEK_KEY) {
+  if (DEEPSEEK_URL) {
     h += '<div class="ai-card"><div class="ai-title">' + icon('bot') + 'AI 学习反馈</div><div id="aiPanel"></div></div>';
   }
 
   h += '<div class="btn-group">';
   h += '<button class="btn btn-outline" onclick="window._copyToday()">' + icon('clipboard') + '复制今日打卡</button>';
-  if (DEEPSEEK_KEY) {
+  if (DEEPSEEK_URL) {
     h += '<button class="btn btn-blue" onclick="window._refreshAI()">' + icon('refresh') + '重新生成反馈</button>';
   }
   h += '</div>';
@@ -778,7 +778,7 @@ function callAI(date) {
   var timer = setTimeout(function () { ctrl.abort(); }, 90000);
   return fetch(DEEPSEEK_URL, {
     method: 'POST', signal: ctrl.signal,
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + DEEPSEEK_KEY },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: DEEPSEEK_MODEL,
       messages: [{ role: 'system', content: AI_SYSTEM }, { role: 'user', content: buildUserPrompt(date) }],
@@ -999,7 +999,7 @@ window._copyToday = function () {
 };
 
 window._refreshAI = function () {
-  if (!DEEPSEEK_KEY) { showToast('未配置 AI 服务'); return; }
+  if (!DEEPSEEK_URL) { showToast('未配置 AI 服务'); return; }
   var d = dayGet(curDate);
   if (completedCount(curDate) < 1 || !d.tasks.some(function (t) { return t.note; })) {
     showToast('写下一科笔记后才能生成反馈哦');
@@ -1363,7 +1363,7 @@ window._clearCloudCfg = function () {
   // 每次打开：补推未同步的打卡，并自动触发 AI 分析
   var day = dayGet(curDate);
   day.tasks.forEach(function (t, i) { pushNoteIfNeeded(curDate, i); });
-  if (DEEPSEEK_KEY) maybeAnalyze(curDate, false);
+  if (DEEPSEEK_URL) maybeAnalyze(curDate, false);
 
   // 云端初始化（可选，REST 直连无需外部 SDK）
   var cfg = getCloudCfg();
