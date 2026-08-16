@@ -391,9 +391,9 @@ details.a-box .a-body { margin-top: 8px; line-height: 1.8; white-space: pre-wrap
 var SUPABASE_URL = 'https://cdsoorfsipczlukqcozq.supabase.co';     // Supabase 项目地址
 var SUPABASE_KEY = 'sb_publishable_QiLYLjpD4wrvP4YI6xpInA_HSIjsVLQ';   // Publishable key（前端公开用，非机密）
 var SUPABASE_TABLE = 'daily_tasks';
-var DEEPSEEK_KEY = '';   // 已废弃：key 移到后端代理（Cloudflare Worker）
-var DEEPSEEK_URL = 'https://odd-art-9427.qq3319193364.workers.dev/';   // AI 后端代理地址（非空 = AI 启用）
-var DEEPSEEK_MODEL = 'deepseek-chat';
+var DEEPSEEK_KEY = '';   // 已废弃：key 移到后端代理（Supabase Edge Function）
+var DEEPSEEK_URL = 'https://cdsoorfsipczlukqcozq.supabase.co/functions/v1/deepseek';   // AI 后端代理地址（Supabase Edge Function，非空 = AI 启用）
+var DEEPSEEK_MODEL = 'deepseek-v4-flash';
 var FLOMO_URL = 'https://flomoapp.com/iwh/MjgwOTQ0Mw/dd818d37121cd049f93f042f33f1b1e9/';   // flomo webhook
 var FLOMO_TAG = '#学习打卡';   // flomo 标签：筛选/隐藏用，不混入灵感笔记
 var PASS_THRESHOLD = 2;
@@ -837,7 +837,7 @@ function callAI(date) {
   var timer = setTimeout(function () { ctrl.abort(); }, 90000);
   return fetch(DEEPSEEK_URL, {
     method: 'POST', signal: ctrl.signal,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
     body: JSON.stringify({
       model: DEEPSEEK_MODEL,
       messages: [{ role: 'system', content: AI_SYSTEM }, { role: 'user', content: buildUserPrompt(date) }],
@@ -898,7 +898,7 @@ function callFollowup(date, question) {
 
   return fetch(DEEPSEEK_URL, {
     method: 'POST', signal: ctrl.signal,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
     body: JSON.stringify({ model: DEEPSEEK_MODEL, messages: msgs, max_tokens: 800, temperature: 0.7, stream: false })
   }).then(function (resp) {
     if (!resp.ok) { return resp.text().then(function () { throw new Error('AI 服务暂时不可用（' + resp.status + '）'); }); }
