@@ -833,46 +833,59 @@ function buildUserPrompt(date) {
 
 function callAI(date) {
   var d = dayGet(date);
-  var ctrl = new AbortController();
-  var timer = setTimeout(function () { ctrl.abort(); }, 90000);
-  return fetch(DEEPSEEK_URL, {
-    method: 'POST', signal: ctrl.signal,
-    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
-    body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
-      messages: [{ role: 'system', content: AI_SYSTEM }, { role: 'user', content: buildUserPrompt(date) }],
-      max_tokens: 2500, temperature: 0.7, stream: false
-    })
-  }).then(function (resp) {
-    if (!resp.ok) { return resp.text().then(function () { throw new Error('AI 服务暂时不可用（' + resp.status + '）'); }); }
-    return resp.json();
-  }).then(function (j) {
-    var content = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
-    var data = null;
-    try { data = JSON.parse(content); }
-    catch (e) {
-      var m = content.match(/\{[\s\S]*\}/);
-      if (m) { try { data = JSON.parse(m[0]); } catch (e2) { data = null; } }
-    }
-    if (!data || typeof data !== 'object') {
-      d.analysis = { summary: content || '（AI 没读懂，可重新生成）', corrections: [], insights: '', questions: [], createdAt: new Date().toISOString() };
-    } else {
-      d.analysis = {
-        summary: typeof data.summary === 'string' ? data.summary : '',
-        corrections: Array.isArray(data.corrections) ? data.corrections.filter(function (c) { return typeof c === 'string'; }) : [],
-        insights: typeof data.insights === 'string' ? data.insights : '',
-        questions: Array.isArray(data.questions) ? data.questions.filter(function (q) { return q && typeof q === 'object'; }).map(function (q) { return { q: typeof q.q === 'string' ? q.q : '', a: typeof q.a === 'string' ? q.a : '' }; }) : [],
-        createdAt: new Date().toISOString()
-      };
-    }
-    d.aiError = null;
-    lsSave();
-    markDirtyAndSync(date);
-  }).catch(function (err) {
-    d.aiError = String(err && err.message ? err.message : err);
-    lsSave();
-    markDirtyAndSync(date);
-  });
+  var attempts = 0;
+  function tryCall() {
+    attempts++;
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, 120000);
+    return fetch(DEEPSEEK_URL, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({
+        model: DEEPSEEK_MODEL,
+        messages: [{ role: 'system', content: AI_SYSTEM }, { role: 'user', content: buildUserPrompt(date) }],
+        max_tokens: 8000, temperature: 0.7, stream: false
+      })
+    }).then(function (resp) {
+      if (!resp.ok) { return resp.text().then(function () { throw new Error('AI 服务暂时不可用（' + resp.status + '）'); }); }
+      return resp.json();
+    }).then(function (j) {
+      var content = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+      var data = null;
+      try { data = JSON.parse(content); }
+      catch (e) {
+        var m = content.match(/\{[\s\S]*\}/);
+        if (m) { try { data = JSON.parse(m[0]); } catch (e2) { data = null; } }
+      }
+      // 空响应或 JSON 解析失败：自动重试（最多 3 次），解决推理模型偶发空输出
+      if ((!content || !data || typeof data !== 'object') && attempts < 3) {
+        return new Promise(function (r) { setTimeout(r, 800); }).then(tryCall);
+      }
+      if (!data || typeof data !== 'object') {
+        d.analysis = { summary: content || '（AI 暂时没生成内容，点"重新生成反馈"再试一次吧）', corrections: [], insights: '', questions: [], createdAt: new Date().toISOString() };
+      } else {
+        d.analysis = {
+          summary: typeof data.summary === 'string' ? data.summary : '',
+          corrections: Array.isArray(data.corrections) ? data.corrections.filter(function (c) { return typeof c === 'string'; }) : [],
+          insights: typeof data.insights === 'string' ? data.insights : '',
+          questions: Array.isArray(data.questions) ? data.questions.filter(function (q) { return q && typeof q === 'object'; }).map(function (q) { return { q: typeof q.q === 'string' ? q.q : '', a: typeof q.a === 'string' ? q.a : '' }; }) : [],
+          createdAt: new Date().toISOString()
+        };
+      }
+      d.aiError = null;
+      lsSave();
+      markDirtyAndSync(date);
+    }).catch(function (err) {
+      // 网络类错误也重试（超时除外）
+      if (attempts < 3 && !(err && err.name === 'AbortError')) {
+        return new Promise(function (r) { setTimeout(r, 800); }).then(tryCall);
+      }
+      d.aiError = String(err && err.message ? err.message : err);
+      lsSave();
+      markDirtyAndSync(date);
+    });
+  }
+  return tryCall();
 }
 
 /* 追问场景的 system prompt：一对一答疑，口语化、大白话 */
@@ -881,31 +894,43 @@ var FOLLOWUP_SYSTEM = '你是一位既懂教学、又懂高考的"学习教练"�
 /* 追问：带完整上下文（笔记 + 原反馈 + 追问历史 + 新问题）调 AI */
 function callFollowup(date, question) {
   var d = dayGet(date);
-  var ctrl = new AbortController();
-  var timer = setTimeout(function () { ctrl.abort(); }, 60000);
+  var attempts = 0;
+  function tryCall() {
+    attempts++;
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, 90000);
 
-  var msgs = [
-    { role: 'system', content: FOLLOWUP_SYSTEM },
-    { role: 'user', content: '我今天打卡的笔记：\n' + buildUserPrompt(date) },
-    { role: 'assistant', content: '我之前给你的反馈：\n' + (d.analysis ? (d.analysis.summary || '') : '') }
-  ];
-  var followups = (d.analysis && d.analysis.followups) || [];
-  followups.forEach(function (f) {
-    msgs.push({ role: 'user', content: f.q });
-    msgs.push({ role: 'assistant', content: f.a });
-  });
-  msgs.push({ role: 'user', content: question });
+    var msgs = [
+      { role: 'system', content: FOLLOWUP_SYSTEM },
+      { role: 'user', content: '我今天打卡的笔记：\n' + buildUserPrompt(date) },
+      { role: 'assistant', content: '我之前给你的反馈：\n' + (d.analysis ? (d.analysis.summary || '') : '') }
+    ];
+    var followups = (d.analysis && d.analysis.followups) || [];
+    followups.forEach(function (f) {
+      msgs.push({ role: 'user', content: f.q });
+      msgs.push({ role: 'assistant', content: f.a });
+    });
+    msgs.push({ role: 'user', content: question });
 
-  return fetch(DEEPSEEK_URL, {
-    method: 'POST', signal: ctrl.signal,
-    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
-    body: JSON.stringify({ model: DEEPSEEK_MODEL, messages: msgs, max_tokens: 800, temperature: 0.7, stream: false })
-  }).then(function (resp) {
-    if (!resp.ok) { return resp.text().then(function () { throw new Error('AI 服务暂时不可用（' + resp.status + '）'); }); }
-    return resp.json();
-  }).then(function (j) {
-    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
-  });
+    return fetch(DEEPSEEK_URL, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({ model: DEEPSEEK_MODEL, messages: msgs, max_tokens: 4000, temperature: 0.7, stream: false })
+    }).then(function (resp) {
+      if (!resp.ok) { return resp.text().then(function () { throw new Error('AI 服务暂时不可用（' + resp.status + '）'); }); }
+      return resp.json();
+    }).then(function (j) {
+      var ans = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+      if (!ans && attempts < 3) { return new Promise(function (r) { setTimeout(r, 800); }).then(tryCall); }
+      return ans;
+    }).catch(function (err) {
+      if (attempts < 3 && !(err && err.name === 'AbortError')) {
+        return new Promise(function (r) { setTimeout(r, 800); }).then(tryCall);
+      }
+      throw err;
+    });
+  }
+  return tryCall();
 }
 
 window._askFollowup = function () {
