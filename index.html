@@ -371,6 +371,12 @@ details.a-box .a-body { margin-top: 8px; line-height: 1.8; white-space: pre-wrap
 .fe-form textarea:focus { outline: none; border-color: var(--green); background: #fff; }
 .fe-form textarea.t-main { min-height: 130px; }
 .auto-save-tip { font-size: 11.5px; color: #b0aca3; text-align: right; margin-top: 4px; }
+.subj-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 4px; }
+.subj-tab { padding: 8px 14px; border-radius: 999px; border: 2px solid var(--border); background: #fff; font-size: 13.5px; font-weight: 600; color: var(--sub); cursor: pointer; font-family: var(--font); transition: all .15s; }
+.subj-tab:active { transform: scale(.96); }
+.subj-tab.active { border-color: var(--green); background: var(--green); color: #fff; }
+.subj-tab .tick { color: #059669; font-weight: 800; margin-right: 2px; }
+.subj-tab.active .tick { color: #fff; }
 .stage-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }
 .stage-pill.draft { background: #f0eee9; color: #6f6a61; }
 .stage-pill.probing { background: #fef3c7; color: #92400e; }
@@ -631,11 +637,55 @@ function weekEndFromKey(key) {
 }
 function clampSolo(n) { n = parseInt(n, 10); if (isNaN(n) || n < 1) return 1; if (n > 4) return 4; return n; }
 
+var WEEK_SUBJECTS = ['数学', '物理', '化学', '语文', '英语', '生物'];
+/* 每科的记忆唤醒提问：帮她想起“这周这科到底上了什么” */
+var SUBJ_PROMPTS = {
+  '数学': '这周数学讲了哪些公式、定理、题型？老师重点强调的例题是什么？',
+  '物理': '这周物理学了什么定律或模型？老师课上推导了什么结论？',
+  '化学': '这周化学讲了哪些反应或物质？方程式和实验现象还记得吗？',
+  '语文': '这周语文上了什么课文或文言文？主旨是什么、作者想表达什么？',
+  '英语': '这周英语学了哪些单词、语法、句型？',
+  '生物': '这周生物讲了什么概念或生理过程？',
+  '其他': '这周还学了什么？（之前没分科写的旧草稿也保存在这里）'
+};
+function emptySubj() {
+  var o = {};
+  WEEK_SUBJECTS.concat(['其他']).forEach(function (s) { o[s] = { list: '', explain: '', stuck: '' }; });
+  return o;
+}
+function subjHas(s) { return !!(s && typeof s === 'object' && ((s.list && s.list.trim()) || (s.explain && s.explain.trim()) || (s.stuck && s.stuck.trim()))); }
+/* 从分科目内容汇总出聚合字段（云端同步与 AI 提示词都用聚合字段） */
+function rebuildAggregate(w) {
+  var lists = [], explains = [], stucks = [];
+  WEEK_SUBJECTS.concat(['其他']).forEach(function (s) {
+    var it = w.subj[s];
+    if (!it || !subjHas(it)) return;
+    var tag = s === '其他' ? '未分科' : s;
+    if (it.list.trim()) lists.push(tag + '：' + it.list.trim());
+    if (it.explain.trim()) explains.push('【' + tag + '】' + it.explain.trim());
+    if (it.stuck.trim()) stucks.push('【' + tag + '】' + it.stuck.trim());
+  });
+  w.list = lists.join('\n');
+  w.explain = explains.join('\n\n');
+  w.stuck = stucks.join('\n');
+}
+
 function normalizeWeek(w) {
   if (!w || typeof w !== 'object') w = {};
   if (typeof w.list !== 'string') w.list = '';
   if (typeof w.explain !== 'string') w.explain = '';
   if (typeof w.stuck !== 'string') w.stuck = '';
+  if (!w.subj || typeof w.subj !== 'object') w.subj = emptySubj();
+  WEEK_SUBJECTS.concat(['其他']).forEach(function (s) {
+    if (!w.subj[s] || typeof w.subj[s] !== 'object') w.subj[s] = { list: '', explain: '', stuck: '' };
+    var it = w.subj[s];
+    ['list', 'explain', 'stuck'].forEach(function (f) { if (typeof it[f] !== 'string') it[f] = ''; });
+  });
+  /* 旧版未分科草稿/存档迁移：整体挪进「其他」，保证进度不丢 */
+  if (!subjHas(w.subj['其他']) && (w.list.trim() || w.explain.trim() || w.stuck.trim()) && !WEEK_SUBJECTS.some(function (s) { return subjHas(w.subj[s]); })) {
+    w.subj['其他'] = { list: w.list, explain: w.explain, stuck: w.stuck };
+  }
+  rebuildAggregate(w);
   if (['draft', 'probing', 'done'].indexOf(w.stage) < 0) w.stage = 'draft';
   if (!w.recall || typeof w.recall !== 'object') w.recall = { status: 'none', questions: [], answers: [], feedback: [], cheer: '' };
   if (!Array.isArray(w.recall.questions)) w.recall.questions = [];
@@ -680,7 +730,7 @@ function weeksSaveDebounced() {
 }
 
 function toCloudWeek(w) {
-  return { list: w.list, explain: w.explain, stuck: w.stuck, stage: w.stage, recall: w.recall, probe: w.probe, result: w.result, pushed: w.pushed, finalizing: false, analyzing: false, aiError: '' };
+  return { list: w.list, explain: w.explain, stuck: w.stuck, subj: w.subj, stage: w.stage, recall: w.recall, probe: w.probe, result: w.result, pushed: w.pushed, finalizing: false, analyzing: false, aiError: '' };
 }
 function fromCloudWeekRow(row) {
   var w = normalizeWeek(row && row.data);
@@ -895,6 +945,8 @@ var SEC = {
 };
 
 var curWeek = null;   /* 学生端当前周（W+周一日期） */
+var curSubject = '';      /* 当前展开的科目标签 */
+var curSubjectWeek = '';  /* curSubject 所属周，换周自动重置 */
 
 function starsHtml(n) {
   n = clampSolo(n);
@@ -1007,17 +1059,38 @@ function renderStudent(app) {
   var stageCls = w.stage === 'draft' ? 'draft' : (w.stage === 'done' ? 'done' : 'probing');
   h += '<div class="week-card-title">' + icon('book') + '本周费曼打卡<span class="stage-pill ' + stageCls + '">' + stageTxt + '</span></div>';
   if (w.stage === 'draft') {
+    /* 选定展开的科目：换周重置；优先落在有讲解内容的科目（换设备接着写不迷路） */
+    if (curSubjectWeek !== curWeek || !w.subj[curSubject]) {
+      curSubjectWeek = curWeek;
+      var order0 = WEEK_SUBJECTS.slice();
+      if (subjHas(w.subj['其他'])) order0.push('其他');
+      curSubject = '数学';
+      var i0;
+      for (i0 = 0; i0 < order0.length; i0++) { if (w.subj[order0[i0]].explain.trim()) { curSubject = order0[i0]; break; } }
+      if (!w.subj[curSubject].explain.trim()) {
+        for (i0 = 0; i0 < order0.length; i0++) { if (subjHas(w.subj[order0[i0]])) { curSubject = order0[i0]; break; } }
+      }
+    }
     h += '<div class="fe-form">';
-    h += '<div class="fe-label"><span class="num">1</span>这周学了什么<span class="opt">（列点就行，随便写）</span></div>';
-    h += '<div class="fe-hint">比如：数学学了向量数量积、物理讲了功……一行一个</div>';
-    h += '<textarea id="fe_list" maxlength="600" placeholder="这周各科都学了哪些内容？" oninput="window._saveWeekDraft(' + "'" + 'list' + "'" + ')">' + escapeHtml(w.list) + '</textarea>';
-    h += '<div class="fe-label"><span class="num">2</span>挑 1-2 个最重要的，讲明白它<span class="opt">（重点！）</span></div>';
+    h += '<div class="fe-hint" style="margin-bottom:8px">点科目展开对应的打卡页，写完一科换一科，不用一次写完</div>';
+    h += '<div class="subj-tabs">';
+    var orderTab = WEEK_SUBJECTS.slice();
+    if (subjHas(w.subj['其他'])) orderTab.push('其他');
+    orderTab.forEach(function (s) {
+      h += '<button class="subj-tab' + (s === curSubject ? ' active' : '') + '" onclick="window._switchSubject(\'' + s + '\')">' + (subjHas(w.subj[s]) ? '<span class="tick">✓</span>' : '') + s + '</button>';
+    });
+    h += '</div>';
+    var subj = w.subj[curSubject];
+    h += '<div class="fe-label"><span class="num">1</span>这周「' + curSubject + '」学了什么<span class="opt">（列点就行，随便写）</span></div>';
+    h += '<div class="fe-hint">' + SUBJ_PROMPTS[curSubject] + '</div>';
+    h += '<textarea id="fe_list" maxlength="600" placeholder="「' + curSubject + '」这周都学了哪些内容？" oninput="window._saveWeekDraft()">' + escapeHtml(subj.list) + '</textarea>';
+    h += '<div class="fe-label"><span class="num">2</span>挑这科最重要的 1 个，讲明白它<span class="opt">（写得出来就写，重点！）</span></div>';
     h += '<div class="fe-hint">假装讲给一个初三的学生听：它是什么？为什么会这样？能拿来干什么？用你自己的话，别背书。</div>';
-    h += '<textarea id="fe_explain" class="t-main" maxlength="1500" placeholder="可以这样开头：这个知识点说的是……它之所以成立，是因为……举个生活中的例子……" oninput="window._saveWeekDraft(' + "'" + 'explain' + "'" + ')">' + escapeHtml(w.explain) + '</textarea>';
+    h += '<textarea id="fe_explain" class="t-main" maxlength="1500" placeholder="可以这样开头：这个知识点说的是……它之所以成立，是因为……举个生活中的例子……" oninput="window._saveWeekDraft()">' + escapeHtml(subj.explain) + '</textarea>';
     h += '<div class="fe-label"><span class="num">3</span>哪里讲着卡壳了？<span class="opt">（诚实写，这正是要搞懂的地方）</span></div>';
-    h += '<textarea id="fe_stuck" maxlength="400" placeholder="比如：为什么公式里要乘 cosθ，我讲不太清楚……" oninput="window._saveWeekDraft(' + "'" + 'stuck' + "'" + ')">' + escapeHtml(w.stuck) + '</textarea>';
+    h += '<textarea id="fe_stuck" maxlength="400" placeholder="比如：为什么公式里要乘 cosθ，我讲不太清楚……" oninput="window._saveWeekDraft()">' + escapeHtml(subj.stuck) + '</textarea>';
     h += '<div class="auto-save-tip" id="autosaveTip">输入自动保存，周五晚可以先写一半，周末接着写</div>';
-    h += '<button class="btn btn-save" style="width:100%;" onclick="window._submitWeekly()"' + (w.analyzing ? ' disabled' : '') + '>' + icon('sparkles') + (w.analyzing ? '教练正在读…' : '提交给教练') + '</button>';
+    h += '<button class="btn btn-save" style="width:100%;" onclick="window._submitWeekly()"' + (w.analyzing ? ' disabled' : '') + '>' + icon('sparkles') + (w.analyzing ? '教练正在读…' : '提交') + '</button>';
     h += '</div>';
   } else if (w.stage === 'done') {
     h += renderWeekResult(w);
@@ -1314,21 +1387,36 @@ function probeCall(key) {
     });
 }
 
-window._saveWeekDraft = function (field) {
+window._saveWeekDraft = function () {
   var w = weekGet(curWeek);
-  var el = document.getElementById('fe_' + field);
-  if (!el) return;
-  w[field] = el.value;
+  var s = (curSubject && w.subj[curSubject]) ? curSubject : '数学';
+  var it = w.subj[s];
+  ['list', 'explain', 'stuck'].forEach(function (f) {
+    var el = document.getElementById('fe_' + f);
+    if (el) it[f] = el.value;
+  });
+  rebuildAggregate(w);
   weeksSaveDebounced();
   var tip = document.getElementById('autosaveTip');
   if (tip) tip.textContent = '已自动保存 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 };
 
+window._switchSubject = function (s) {
+  if (!SUBJ_PROMPTS[s] || s === curSubject) return;
+  window._saveWeekDraft();
+  weeksSave();
+  curSubject = s;
+  curSubjectWeek = curWeek;
+  render();
+};
+
 window._submitWeekly = function () {
   var w = weekGet(curWeek);
   if (w.stage !== 'draft' || w.analyzing) return;
+  window._saveWeekDraft();
+  weeksSave();
   if (!w.explain.trim()) {
-    showToast('第 2 部分"讲给初中生听"是重点，必须写哦');
+    showToast('先挑一个知识点把「讲明白」写了，这是重点哦');
     var el = document.getElementById('fe_explain');
     if (el) { el.style.borderColor = '#f87171'; setTimeout(function () { el.style.borderColor = ''; }, 1200); }
     return;
