@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>每日学习打卡</title>
+<title>每周学习打卡</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -362,6 +362,36 @@ details.a-box .a-body { margin-top: 8px; line-height: 1.8; white-space: pre-wrap
 .config-card .config-body { padding: 0 20px 18px; border-top: 1px solid var(--border); display: none; }
 .config-card.open .config-body { display: block; }
 
+/* ============ 周打卡（费曼模式）============ */
+.fe-label { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; margin: 14px 0 6px; }
+.fe-label .num { width: 22px; height: 22px; border-radius: 50%; background: var(--green); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; }
+.fe-label .opt { font-size: 11.5px; color: var(--sub); font-weight: 400; }
+.fe-hint { font-size: 12.5px; color: var(--sub); line-height: 1.7; margin-bottom: 6px; }
+.fe-form textarea { width: 100%; padding: 12px 14px; border: 2px solid var(--border); border-radius: 14px; font-size: 15px; font-family: var(--font); min-height: 74px; resize: vertical; line-height: 1.7; background: #fdfcfa; }
+.fe-form textarea:focus { outline: none; border-color: var(--green); background: #fff; }
+.fe-form textarea.t-main { min-height: 130px; }
+.auto-save-tip { font-size: 11.5px; color: #b0aca3; text-align: right; margin-top: 4px; }
+.stage-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.stage-pill.draft { background: #f0eee9; color: #6f6a61; }
+.stage-pill.probing { background: #fef3c7; color: #92400e; }
+.stage-pill.done { background: #d1fae5; color: #065f46; }
+.star-row { display: inline-flex; gap: 3px; align-items: center; }
+.star-row .st { width: 18px; height: 18px; }
+.star-on { color: #f59e0b; } .star-off { color: #e5e1d9; }
+.solo-tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700; background: #f5f3ff; color: #6d28d9; }
+.round-badge { display: inline-block; min-width: 18px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 800; background: var(--blue); color: #fff; text-align: center; margin-right: 4px; }
+.week-card-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; margin-bottom: 12px; flex-wrap: wrap; }
+.week-card-title .ic { width: 18px; height: 18px; color: var(--green); }
+.archive-item { border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; background: #fbfaf7; }
+.archive-item .a-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.depth-curve { display: flex; align-items: flex-end; gap: 8px; height: 96px; margin: 10px 0 4px; }
+.depth-curve .dcol { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
+.depth-curve .dbar { width: 100%; max-width: 30px; border-radius: 6px 6px 2px 2px; background: #e5e1d9; min-height: 4px; }
+.depth-curve .dbar.s1 { background: #fca5a5; } .depth-curve .dbar.s2 { background: #fcd34d; }
+.depth-curve .dbar.s3 { background: #86efac; } .depth-curve .dbar.s4 { background: #059669; }
+.depth-curve .dlab { font-size: 10px; color: var(--sub); }
+.depth-curve .dnum { font-size: 11px; font-weight: 700; color: var(--text); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -577,6 +607,110 @@ function dayGet(date) {
 }
 function completedCount(date) { return dayGet(date).tasks.filter(function (t) { return t.completed; }).length; }
 
+/* ================= 周打卡数据层（费曼模式 v5） =================
+   周记录以 'W' + 周一日期(yyyymmdd) 为 key，与每日记录分开存储；
+   云端复用 daily_tasks 表（date 列存 W 前缀 key，data 存周记录），同步时按前缀分流 */
+var WEEKS_KEY = 'study_tracker_weeks_v1';
+var weeks = {};
+var PROBE_MAX_ROUNDS = 3;
+var SOLO_LABEL = { 1: '单点 · 只说了名词', 2: '多点 · 说了是什么', 3: '关联 · 讲清了为什么', 4: '拓展 · 能举一反三' };
+
+function weekMonday(dateStr) {
+  var y = parseInt(dateStr.slice(0, 4), 10), m = parseInt(dateStr.slice(4, 6), 10) - 1, d = parseInt(dateStr.slice(6, 8), 10);
+  var dt = new Date(y, m, d);
+  var dow = dt.getDay();
+  var diff = dow === 0 ? 6 : dow - 1;   /* 周一为一周开始 */
+  dt.setDate(dt.getDate() - diff);
+  return '' + dt.getFullYear() + pad(dt.getMonth() + 1) + pad(dt.getDate());
+}
+function weekKeyFor(dateStr) { return 'W' + weekMonday(dateStr); }
+function weekEndFromKey(key) {
+  var y = parseInt(key.slice(1, 5), 10), m = parseInt(key.slice(5, 7), 10) - 1, d = parseInt(key.slice(7, 9), 10);
+  var dt = new Date(y, m, d); dt.setDate(dt.getDate() + 6);
+  return '' + dt.getFullYear() + pad(dt.getMonth() + 1) + pad(dt.getDate());
+}
+function clampSolo(n) { n = parseInt(n, 10); if (isNaN(n) || n < 1) return 1; if (n > 4) return 4; return n; }
+
+function normalizeWeek(w) {
+  if (!w || typeof w !== 'object') w = {};
+  if (typeof w.list !== 'string') w.list = '';
+  if (typeof w.explain !== 'string') w.explain = '';
+  if (typeof w.stuck !== 'string') w.stuck = '';
+  if (['draft', 'probing', 'done'].indexOf(w.stage) < 0) w.stage = 'draft';
+  if (!w.recall || typeof w.recall !== 'object') w.recall = { status: 'none', questions: [], answers: [], feedback: [], cheer: '' };
+  if (!Array.isArray(w.recall.questions)) w.recall.questions = [];
+  if (!Array.isArray(w.recall.answers)) w.recall.answers = [];
+  if (!Array.isArray(w.recall.feedback)) w.recall.feedback = [];
+  if (['none', 'loading', 'ready', 'evaluated'].indexOf(w.recall.status) < 0) w.recall.status = 'none';
+  if (!w.probe || typeof w.probe !== 'object') w.probe = {};
+  if (!Array.isArray(w.probe.rounds)) w.probe.rounds = [];
+  if (!Array.isArray(w.probe.feedbacks)) w.probe.feedbacks = [];
+  if (typeof w.probe.pendingQ !== 'string') w.probe.pendingQ = '';
+  if (!w.result || typeof w.result !== 'object') w.result = null;
+  if (typeof w.finalizing !== 'boolean') w.finalizing = false;
+  if (typeof w.analyzing !== 'boolean') w.analyzing = false;
+  if (typeof w.aiError !== 'string') w.aiError = '';
+  if (typeof w.pushed !== 'object' || !w.pushed) w.pushed = {};
+  if (w.pushed.archive !== false && w.pushed.archive !== true) w.pushed.archive = false;
+  if (typeof w.dirty !== 'boolean') w.dirty = false;
+  if (typeof w.updatedAt !== 'number') w.updatedAt = 0;
+  return w;
+}
+
+function loadWeeks() {
+  var raw = getStore(WEEKS_KEY);
+  if (raw) { try { weeks = JSON.parse(raw) || {}; } catch (e) { weeks = {}; } }
+  Object.keys(weeks).forEach(function (k) { weeks[k] = normalizeWeek(weeks[k]); });
+}
+
+function weekGet(key) {
+  if (!weeks[key]) weeks[key] = normalizeWeek({});
+  return weeks[key];
+}
+
+function weeksSave() {
+  var keys = Object.keys(weeks);
+  if (keys.length > 30) keys.sort().slice(0, keys.length - 30).forEach(function (k) { delete weeks[k]; });
+  setStore(WEEKS_KEY, JSON.stringify(weeks));
+}
+var weeksSaveTid = null;
+function weeksSaveDebounced() {
+  clearTimeout(weeksSaveTid);
+  weeksSaveTid = setTimeout(weeksSave, 400);
+}
+
+function toCloudWeek(w) {
+  return { list: w.list, explain: w.explain, stuck: w.stuck, stage: w.stage, recall: w.recall, probe: w.probe, result: w.result, pushed: w.pushed, finalizing: false, analyzing: false, aiError: '' };
+}
+function fromCloudWeekRow(row) {
+  var w = normalizeWeek(row && row.data);
+  w.dirty = false;
+  var ts = row && row.updated_at ? Date.parse(row.updated_at) : 0;
+  w.updatedAt = isNaN(ts) ? 0 : ts;
+  return w;
+}
+function markWeekDirtyAndSync(key) {
+  var w = weeks[key];
+  if (!w) return;
+  w.dirty = true;
+  weeksSave();
+  syncPushWeek(key);
+}
+function syncPushWeek(key) {
+  var w = weeks[key];
+  if (!w || !cloudReady) return Promise.resolve(false);
+  if (!w.dirty) return Promise.resolve(true);
+  setCloudStatus('busy');
+  var payload = { date: key, data: toCloudWeek(w), updated_at: new Date().toISOString() };
+  return sbFetch('', { method: 'POST', body: JSON.stringify([payload]), prefer: 'resolution=merge-duplicates' })
+    .then(function () { w.dirty = false; w.updatedAt = Date.now(); weeksSave(); setCloudStatus('ok'); return true; })
+    .catch(function (e) { console.warn('周打卡推送失败', key, e); setCloudStatus('err'); return false; });
+}
+function flushDirtyWeeks() {
+  if (!cloudReady) return;
+  Object.keys(weeks).forEach(function (k) { if (weeks[k] && weeks[k].dirty) syncPushWeek(k); });
+}
+
 /* ================= 云端同步（Supabase REST，零外部依赖） ================= */
 var cloudReady = false;
 var cloudStatus = 'off';   // off | ok | err | busy
@@ -687,6 +821,14 @@ function syncPullAll() {
       (rows || []).forEach(function (row) {
         var date = row.date;
         if (!date || typeof date !== 'string') return;
+        /* 周打卡记录（W 前缀 key）单独分流到 weeks */
+        if (/^W\d{8}$/.test(date)) {
+          var lw = weeks[date];
+          var wrts = row.updated_at ? Date.parse(row.updated_at) : 0;
+          if (isNaN(wrts)) wrts = 0;
+          if (!lw || wrts > (lw.updatedAt || 0)) { weeks[date] = fromCloudWeekRow(row); changed = true; }
+          return;
+        }
         var local = all[date];
         var rts = row.updated_at ? Date.parse(row.updated_at) : 0;
         if (isNaN(rts)) rts = 0;
@@ -695,7 +837,7 @@ function syncPullAll() {
           changed = true;
         }
       });
-      if (changed) { lsSave(); render(); }
+      if (changed) { lsSave(); weeksSave(); render(); }
       setCloudStatus('ok');
     })
     .catch(function (e) { console.warn('云端拉取失败', e); setCloudStatus('err'); });
@@ -735,7 +877,7 @@ function flushDirtyLocal() {
 
 window._refreshCloud = function () {
   if (!cloudReady) { showToast('未配置云端，当前为本地模式'); return; }
-  syncPullAll().then(function () { flushDirtyLocal(); });
+  syncPullAll().then(function () { flushDirtyLocal(); flushDirtyWeeks(); });
 };
 
 /* ================= 渲染 ================= */
@@ -752,74 +894,151 @@ var SEC = {
   evening: { cls: 'evening', ic: 'moon', title: '晚上' }
 };
 
-function renderStudent(app) {
-  var d = dayGet(curDate);
-  var cnt = completedCount(curDate);
+var curWeek = null;   /* 学生端当前周（W+周一日期） */
+
+function starsHtml(n) {
+  n = clampSolo(n);
+  var h = '<span class="star-row" aria-label="深度 L' + n + '">';
+  for (var i = 1; i <= 4; i++) {
+    h += '<svg class="st ' + (i <= n ? 'star-on' : 'star-off') + '" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>';
+  }
+  return h + '</span>';
+}
+
+function renderRecallCard(w) {
+  var r = w.recall;
+  if (r.status === 'none') return '';
+  var h = '<div class="card">';
+  h += '<div class="week-card-title">' + icon('flame') + '先回忆上周<span style="font-size:11.5px;color:var(--sub);font-weight:400;">间隔一周再提取，记得更牢</span>';
+  if (r.status === 'evaluated') h += '<span class="stage-pill done">已完成</span>';
+  h += '</div>';
+  if (r.status === 'loading') {
+    h += '<div class="ai-loading"><div class="spinner" style="border-top-color:var(--purple)"></div><div style="margin-top:8px">正在从上周的讲解里挑回忆题…</div></div>';
+  } else if (r.status === 'ready') {
+    r.questions.forEach(function (q, i) {
+      h += '<div class="fe-label"><span class="num">' + (i + 1) + '</span>' + escapeHtml(q.about || '回忆题') + '</div>';
+      h += '<div class="fe-hint">' + escapeHtml(q.q) + '</div>';
+      h += '<textarea id="recall_' + i + '" maxlength="300" placeholder="凭记忆答，想不起来就写' + "'" + '想不起来' + "'" + '，别翻书" oninput="window._saveRecallAnswer(' + i + ')">' + escapeHtml(r.answers[i] || '') + '</textarea>';
+    });
+    h += '<div class="btn-group">';
+    h += '<button class="btn btn-blue" style="flex:1" onclick="window._submitRecall()"' + (w.analyzing ? ' disabled' : '') + '>' + (w.analyzing ? '教练正在看…' : '交卷') + '</button>';
+    h += '<button class="btn btn-outline" onclick="window._skipRecall()">跳过</button>';
+    h += '</div>';
+  } else if (r.status === 'evaluated') {
+    if (r.cheer) h += '<div class="ai-sec summary"><div class="body">' + escapeHtml(r.cheer) + '</div></div>';
+    h += '<details class="a-box"><summary>回忆结果回顾</summary><div class="a-body">';
+    r.questions.forEach(function (q, i) {
+      h += '<div style="margin-bottom:10px;"><b>' + escapeHtml(q.q) + '</b><br>你的回答：' + escapeHtml((r.answers[i] || '').trim() || '（没答）') + '<br>' + escapeHtml(r.feedback[i] || '') + '</div>';
+    });
+    h += '</div></details>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderProbeChat(w) {
   var h = '';
-  h += '<div class="header"><h1>' + icon('book') + '每日学习打卡</h1>';
-  h += '<div class="date-badge">' + icon('calendar') + fmtDate(curDate) + ' 星期' + fmtWeekday(curDate) + ' · ' + d.mode + '模式</div></div>';
+  var rounds = w.probe.rounds || [];
+  var fbs = w.probe.feedbacks || [];
+  if (fbs[0]) h += '<div class="followup-a">' + icon('bot') + escapeHtml(fbs[0].note) + '</div>';
+  for (var i = 0; i < rounds.length; i++) {
+    h += '<div class="followup-q">' + icon('lightbulb') + '<span><span class="round-badge">问</span>' + escapeHtml(rounds[i].q) + '</span></div>';
+    h += '<div class="followup-a">' + icon('book') + '<span>' + escapeHtml(rounds[i].a) + '</span></div>';
+    if (fbs[i + 1]) h += '<div class="followup-a">' + icon('bot') + escapeHtml(fbs[i + 1].note) + '</div>';
+  }
+  if (w.probe.pendingQ) {
+    h += '<div class="followup-q">' + icon('lightbulb') + '<span><span class="round-badge">问</span>' + escapeHtml(w.probe.pendingQ) + '</span></div>';
+    if (w.analyzing) {
+      h += '<div class="followup-loading">教练正在读你的回答…</div>';
+    } else {
+      h += '<textarea id="probeInput" maxlength="500" style="width:100%;padding:12px 14px;border:2px solid var(--border);border-radius:14px;font-size:15px;font-family:var(--font);min-height:70px;resize:vertical;line-height:1.7;background:#fff;" placeholder="用你自己的话回答，别背书原话哦" onkeydown="if(event.key===' + "'" + 'Enter' + "'" + '&&!event.shiftKey){event.preventDefault();window._answerProbe();}"></textarea>';
+      h += '<button class="btn btn-blue" style="width:100%;margin-top:8px" onclick="window._answerProbe()">回答教练（第 ' + (rounds.length + 1) + '/' + PROBE_MAX_ROUNDS + ' 轮）</button>';
+    }
+  }
+  return h;
+}
+
+function renderWeekResult(w) {
+  var r = w.result;
+  if (!r) return '';
+  var h = '';
+  h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">' + starsHtml(r.solo) + '<span class="solo-tag">L' + r.solo + ' · ' + (SOLO_LABEL[r.solo] || '') + '</span></div>';
+  if (r.praise) h += '<div class="ai-sec summary"><h4>' + icon('pin') + '教练点评</h4><div class="body">' + escapeHtml(r.praise) + '</div></div>';
+  if (r.corrections && r.corrections.length) {
+    h += '<div class="ai-sec correct"><h4>' + icon('alert-circle') + '有一点点小误会</h4><div class="body"><ul>' +
+      r.corrections.map(function (c) { return '<li>' + escapeHtml(c) + '</li>'; }).join('') + '</ul></div></div>';
+  }
+  if (r.insights) h += '<div class="ai-sec insight"><h4>' + icon('network') + '知识之间的小秘密</h4><div class="body">' + escapeHtml(r.insights) + '</div></div>';
+  if (r.archive) h += '<div class="ai-sec questions"><h4>' + icon('star') + '你的费曼讲解（已存档）</h4><div class="body" style="background:#f0fdf4;border-radius:12px;padding:12px 14px;">' + escapeHtml(r.archive) + '</div></div>';
+  var rounds = (w.probe && w.probe.rounds) || [];
+  if (rounds.length) {
+    h += '<div class="followup-wrap">';
+    rounds.forEach(function (rd) {
+      h += '<div class="followup-q">' + icon('lightbulb') + escapeHtml(rd.q) + '</div>';
+      h += '<div class="followup-a">' + icon('book') + escapeHtml(rd.a) + '</div>';
+    });
+    h += '</div>';
+  }
+  return h;
+}
+
+function renderStudent(app) {
+  var w = weekGet(curWeek);
+  var range = fmtDate(curWeek.slice(1, 9)) + ' - ' + fmtDate(weekEndFromKey(curWeek));
+  var h = '';
+  h += '<div class="header"><h1>' + icon('book') + '每周学习打卡</h1>';
+  h += '<div class="date-badge">' + icon('calendar') + range + ' · 费曼模式</div></div>';
   h += '<div class="sync-bar" id="syncBar"><span class="dot"></span><span class="sync-txt"></span></div>';
 
-  if (cnt === 0) {
-    h += '<div class="banner gray"><div class="b-icon">' + icon('sparkles') + '</div><div class="b-title">今天还没开始</div><div class="b-sub">完成 2 科就算通关，先从第一科开始吧</div></div>';
-  } else if (cnt === 1) {
-    h += '<div class="banner yellow"><div class="b-icon">' + icon('flame') + '</div><div class="b-title">还差 1 科就达标啦！</div><div class="b-sub">再学一科，今天就通关了</div></div>';
-  } else if (cnt < 6) {
-    h += '<div class="banner green"><div class="b-icon">' + icon('check-circle') + '</div><div class="b-title">今日达标！' + cnt + ' 科通关</div><div class="b-sub">2 科以上就算达标，多学多赚，加油！</div></div>';
+  if (w.stage === 'done' && w.result) {
+    h += '<div class="banner green"><div class="b-icon">' + icon('check-circle') + '</div><div class="b-title">本周打卡完成！讲解深度 L' + w.result.solo + '</div><div class="b-sub">' + escapeHtml(SOLO_LABEL[w.result.solo] || '') + '</div></div>';
+  } else if (w.stage === 'probing' || w.finalizing) {
+    h += '<div class="banner yellow"><div class="b-icon">' + icon('flame') + '</div><div class="b-title">' + (w.finalizing ? '正在生成本周结算…' : '教练正在追问你') + '</div><div class="b-sub">回答教练的问题，把知识讲明白就算通关</div></div>';
   } else {
-    h += '<div class="banner gold"><div class="b-icon">' + icon('star') + '</div><div class="b-title">六科全勤！今天超厉害了！</div><div class="b-sub">全科通关，值得给自己点个赞</div></div>';
+    h += '<div class="banner gray"><div class="b-icon">' + icon('sparkles') + '</div><div class="b-title">本周还没打卡</div><div class="b-sub">像讲给初中生听一样，把本周学的内容讲明白</div></div>';
   }
 
+  /* 卡片1：回忆上周（间隔提取） */
+  h += renderRecallCard(w);
+
+  /* 卡片2：费曼打卡 */
   h += '<div class="card">';
-  var cur = '';
-  d.tasks.forEach(function (t) {
-    if (t.section !== cur) {
-      cur = t.section; var cfg = SEC[cur];
-      h += '<div class="section-title ' + cfg.cls + '">' + icon(cfg.ic) + cfg.title + '</div>';
-    }
-    h += '<div class="task-row' + (t.completed ? ' done' : '') + '">';
-    h += '<div class="task-line" onclick="window._openNote(' + t.task_index + ')" role="button" aria-label="' + escapeHtml(t.label) + '">';
-    h += '<span class="checkbox-wrap"><input type="checkbox"' + (t.completed ? ' checked' : '') + ' tabindex="-1" readonly><span class="checkbox-custom">' + icon('check') + '</span></span>';
-    h += '<span class="task-label"><span class="name">' + escapeHtml(t.label) + '</span>';
-    if (t.tag) h += '<span class="tag ' + t.tagClass + '">' + t.tag + '</span>';
-    h += '</span></div>';
-    if (t.completed && t.note) {
-      h += '<div class="note-preview">' + escapeHtml(t.note) + '</div>';
-    } else if (t.completed) {
-      h += '<div class="note-preview">（今天这门课还没写学了什么，点一下补上）</div>';
-    } else {
-      h += '<div class="add-note-hint">点一下，写下今天这门课你学到了什么，才算完成打卡</div>';
-    }
+  var stageTxt = w.stage === 'draft' ? '未提交' : (w.stage === 'done' ? '已完成' : '追问中');
+  var stageCls = w.stage === 'draft' ? 'draft' : (w.stage === 'done' ? 'done' : 'probing');
+  h += '<div class="week-card-title">' + icon('book') + '本周费曼打卡<span class="stage-pill ' + stageCls + '">' + stageTxt + '</span></div>';
+  if (w.stage === 'draft') {
+    h += '<div class="fe-form">';
+    h += '<div class="fe-label"><span class="num">1</span>这周学了什么<span class="opt">（列点就行，随便写）</span></div>';
+    h += '<div class="fe-hint">比如：数学学了向量数量积、物理讲了功……一行一个</div>';
+    h += '<textarea id="fe_list" maxlength="600" placeholder="这周各科都学了哪些内容？" oninput="window._saveWeekDraft(' + "'" + 'list' + "'" + ')">' + escapeHtml(w.list) + '</textarea>';
+    h += '<div class="fe-label"><span class="num">2</span>挑 1-2 个最重要的，讲明白它<span class="opt">（重点！）</span></div>';
+    h += '<div class="fe-hint">假装讲给一个初三的学生听：它是什么？为什么会这样？能拿来干什么？用你自己的话，别背书。</div>';
+    h += '<textarea id="fe_explain" class="t-main" maxlength="1500" placeholder="可以这样开头：这个知识点说的是……它之所以成立，是因为……举个生活中的例子……" oninput="window._saveWeekDraft(' + "'" + 'explain' + "'" + ')">' + escapeHtml(w.explain) + '</textarea>';
+    h += '<div class="fe-label"><span class="num">3</span>哪里讲着卡壳了？<span class="opt">（诚实写，这正是要搞懂的地方）</span></div>';
+    h += '<textarea id="fe_stuck" maxlength="400" placeholder="比如：为什么公式里要乘 cosθ，我讲不太清楚……" oninput="window._saveWeekDraft(' + "'" + 'stuck' + "'" + ')">' + escapeHtml(w.stuck) + '</textarea>';
+    h += '<div class="auto-save-tip" id="autosaveTip">输入自动保存，周五晚可以先写一半，周末接着写</div>';
+    h += '<button class="btn btn-save" style="width:100%;" onclick="window._submitWeekly()"' + (w.analyzing ? ' disabled' : '') + '>' + icon('sparkles') + (w.analyzing ? '教练正在读…' : '提交给教练') + '</button>';
     h += '</div>';
-  });
-  var ringR = 50, ringC = 2 * Math.PI * ringR;
-  var ringPct = cnt / 6;
-  var ringOffset = ringC * (1 - ringPct);
-  var ringColor = cnt >= 2 ? '#059669' : (cnt === 1 ? '#f59e0b' : '#e5e7eb');
-  h += '<div class="progress-ring-wrap">';
-  h += '<svg class="progress-ring' + (cnt >= 2 ? ' pass' : '') + '" viewBox="0 0 120 120" aria-label="已完成 ' + cnt + ' / 6">';
-  h += '<circle class="ring-bg" cx="60" cy="60" r="' + ringR + '"/>';
-  h += '<circle class="ring-fg" cx="60" cy="60" r="' + ringR + '" stroke="' + ringColor + '" stroke-dasharray="' + ringC.toFixed(2) + '" stroke-dashoffset="' + ringOffset.toFixed(2) + '"/>';
-  h += '<text class="ring-num" x="60" y="58" text-anchor="middle">' + cnt + '</text>';
-  h += '<text class="ring-sub" x="60" y="78" text-anchor="middle">/ 6</text>';
-  h += '</svg></div>';
-  h += '<div class="progress-text">' + (cnt >= 2 ? '<b style="color:var(--green-dark)">今日达标！继续加油</b>' : '完成 2 科 = 今日达标') + '</div>';
+  } else if (w.stage === 'done') {
+    h += renderWeekResult(w);
+  } else {
+    h += renderProbeChat(w);
+  }
   h += '</div>';
 
-  if (DEEPSEEK_URL) {
-    h += '<div class="ai-card"><div class="ai-title">' + icon('bot') + 'AI 学习反馈</div><div id="aiPanel"></div></div>';
+  if (w.aiError) {
+    h += '<div class="ai-card"><div class="ai-hint">教练暂时开小差了：' + escapeHtml(w.aiError) + '<br><button class="btn btn-sm btn-outline" style="margin-top:10px" onclick="window._retryWeekAI()">再试一次</button></div></div>';
   }
 
   h += '<div class="btn-group">';
-  h += '<button class="btn btn-outline" onclick="window._copyToday()">' + icon('clipboard') + '复制今日打卡</button>';
-  if (DEEPSEEK_URL) {
-    h += '<button class="btn btn-blue" onclick="window._refreshAI()">' + icon('refresh') + '重新生成反馈</button>';
+  h += '<button class="btn btn-outline" onclick="window._copyWeek()">' + icon('clipboard') + '复制本周打卡</button>';
+  if (w.stage === 'done') {
+    h += '<button class="btn btn-outline" onclick="window._resetWeek()">' + icon('refresh') + '重新打卡本周</button>';
   }
   h += '</div>';
 
   app.innerHTML = h;
   renderCloudStatus();
-  renderAI();
 }
 
 /* ================= AI 反馈 ================= */
@@ -957,6 +1176,318 @@ window._askFollowup = function () {
     renderAI();
     showToast('追问失败：' + (e && e.message ? e.message : e));
   });
+};
+
+/* ================= 周打卡 AI（v3：间隔提取 + 费曼追问循环） ================= */
+var COACH_BASE = '你是一位既懂教学、又懂高考的"学习教练"，也是 ta 亲近的学习伙伴。语气自然、温暖、口语化，用"你"称呼 ta，不评判人格、不摆老师架子，只评价"讲得清不清楚"。术语严格用高中教材标准说法（数学的"数量积"不要叫"点积"；"叉乘/向量积"是大学内容，除非标注大学拓展否则不提）。考纲对齐，重方法胜过重答案。全部用简体中文。';
+
+/* 追问循环：评估深度（SOLO）→ 不达标就只抛 1 个追问 → 反敷衍 */
+var PROBE_SYSTEM = COACH_BASE + '\n\n场景：费曼式周末打卡。ta 提交了本周打卡，分三部分：【本周所学】【讲给初中生听】【卡壳点】。ta 的弱点是容易满足于简略、表面的复述，你的任务是通过追问把 ta 逼到"真正讲明白"为止。\n\n【深度分级（SOLO）】\nL1 单点：只报名词或复述课本原话，没有自己的解释\nL2 多点：有解释，但要点孤立，没讲清"为什么"\nL3 关联：讲清了为什么成立、怎么用，有自己的例子或比喻，建立了联系\nL4 拓展：在 L3 之上还能迁移到新情境、举一反三\n\n【追问工具箱（每次挑最合适的一种）】\n1.举例：让 ta 举一个自己想出来的例子（生活例子或自编小题）\n2.为什么：针对 ta 讲得最含糊的一步问"为什么会这样"\n3.变式：改一个条件，问"还成立吗？会怎样？"\n4.简化：让 ta 用更直白的话讲给小学生听\n5.联系：让 ta 说说这个知识和学过的什么有联系\n6.反驳：给一个常见的错误理解，让 ta 判断对不对并说明理由\n\n【反敷衍规则（必须执行）】\n- ta 的回答若只是重复课本原话、一句话带过（"就是那个意思""差不多是这样"）、答非所问 → 温和但坚定地点破："这句像书上的原话，换你自己的话再说一遍"或"太简略啦，展开讲讲，最好举个例子"\n- 每次只问一个问题，绝不一口气问多个\n- 问题必须具体到 ta 写的内容，禁止空泛\n\n【达标判定】\n- 原始讲解达到 L3，或最新回答达到 L3 → pass\n- 追问已满 3 轮仍未达标 → 也 pass（按实际水平评级，别把人问崩）\n\n【输出格式】只输出 JSON，不要任何其他内容：\n{"solo":1到4的整数,"verdict":"pass"或"probe","note":"一两句回应：先具体肯定讲对的部分，再点出哪里还模糊","question":"下一问，verdict为pass时留空字符串","tool":"所用工具箱编号，pass时留空字符串"}';
+
+/* 结算：生成最终评级 + 讲解存档 */
+var FINAL_SYSTEM = COACH_BASE + '\n\n场景：费曼式周末打卡的结算环节。追问已结束（达标或用完轮次），现在给出最终反馈。\n\n【输出格式】只输出 JSON，不要任何其他内容：\n{"solo":1到4的整数（综合讲解与追问表现的最终深度评级）,"praise":"2-3句真诚具体的肯定，不要空泛的\'很棒\'","corrections":["讲解中的知识性错误与不规范表达，逐条给出正确说法；没有就空数组"],"insights":"100字左右：从本周内容提炼1-2个可迁移的思想方法，点破\'以后遇到什么情况还能用\'","archive":"150-250字：把 ta 的讲解整理成一篇属于 ta 自己的\'费曼讲解\'存档——用 ta 的口吻和例子，修顺表达、修正错误、补上追问中 ta 自己想通的部分，开头不要客套"}';
+
+/* 间隔提取：从上周存档出回忆题 */
+var RECALL_GEN_SYSTEM = COACH_BASE + '\n\n场景：间隔提取练习（隔了一周，先凭记忆回忆再学新的，对抗遗忘）。根据上周的打卡内容与讲解存档，出 1-2 个"直接凭记忆回答"的回忆题，考上周最重要、最容易忘的点，不考偏难怪细节。\n\n【输出格式】只输出 JSON，不要任何其他内容：\n{"questions":[{"q":"问题本身，直接可答","about":"对应的知识点名称"}]}';
+
+/* 间隔提取：评卷 */
+var RECALL_EVAL_SYSTEM = COACH_BASE + '\n\n场景：评价间隔提取的回答。逐个判断：答对了(ok)、有点模糊(fuzzy)、想不起来或答错(forgot)。模糊/答错时给提示引导回忆，别直接把答案全盘托出。\n\n【输出格式】只输出 JSON，不要任何其他内容：\n{"items":[{"idx":0,"verdict":"ok","feedback":"一两句大白话反馈"}],"cheer":"一句简短鼓励"}';
+
+/* 通用 JSON 调用（带重试，max_tokens 给足防推理模型截断） */
+function callAIJson(system, userPrompt, maxTokens) {
+  var attempts = 0;
+  function tryCall() {
+    attempts++;
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, 120000);
+    return fetch(DEEPSEEK_URL, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({
+        model: DEEPSEEK_MODEL,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: userPrompt }],
+        max_tokens: maxTokens || 8000, temperature: 0.7, stream: false
+      })
+    }).then(function (resp) {
+      if (!resp.ok) { return resp.text().then(function () { throw new Error('AI 服务暂时不可用（' + resp.status + '）'); }); }
+      return resp.json();
+    }).then(function (j) {
+      var content = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+      var data = null;
+      try { data = JSON.parse(content); }
+      catch (e) { var m = content.match(/\{[\s\S]*\}/); if (m) { try { data = JSON.parse(m[0]); } catch (e2) { data = null; } } }
+      if ((!content || !data) && attempts < 3) { return new Promise(function (r) { setTimeout(r, 800); }).then(tryCall); }
+      return { raw: content, data: data };
+    }).catch(function (err) {
+      if (attempts < 3 && !(err && err.name === 'AbortError')) { return new Promise(function (r) { setTimeout(r, 800); }).then(tryCall); }
+      throw err;
+    });
+  }
+  return tryCall();
+}
+
+function buildWeekUserPrompt(w) {
+  var s = '【本周所学】\n' + (w.list || '（未填）') + '\n\n【讲给初中生听】\n' + (w.explain || '（未填）') + '\n\n【卡壳点】\n' + (w.stuck || '（没写，可能没有）');
+  var rounds = (w.probe && w.probe.rounds) || [];
+  if (rounds.length) {
+    s += '\n\n【追问记录】';
+    rounds.forEach(function (r, i) { s += '\n第' + (i + 1) + '轮 — 教练问：' + r.q + '\nta 答：' + (r.a || '（未答）'); });
+  }
+  return s;
+}
+
+/* 结算：生成最终评级 + 讲解存档（探针判 pass 后调用；结算失败重试也走这里） */
+function finalizeWeek(key) {
+  var w = weekGet(key);
+  w.finalizing = true;
+  markWeekDirtyAndSync(key);
+  render();
+  callAIJson(FINAL_SYSTEM, buildWeekUserPrompt(w) + '\n\n【当前深度评级】L' + w.probe.solo, 6000).then(function (res) {
+    var w2 = weekGet(key);
+    w2.analyzing = false; w2.finalizing = false;
+    var d2 = res && res.data;
+    if (!d2 || typeof d2 !== 'object') {
+      w2.aiError = '结算生成失败，点重试再来一次';
+      markWeekDirtyAndSync(key); render(); return;
+    }
+    w2.result = {
+      solo: clampSolo(d2.solo) || w2.probe.solo || 1,
+      praise: typeof d2.praise === 'string' ? d2.praise : '',
+      corrections: Array.isArray(d2.corrections) ? d2.corrections.filter(function (c) { return typeof c === 'string'; }) : [],
+      insights: typeof d2.insights === 'string' ? d2.insights : '',
+      archive: typeof d2.archive === 'string' ? d2.archive : '',
+      createdAt: new Date().toISOString()
+    };
+    w2.stage = 'done';
+    markWeekDirtyAndSync(key);
+    pushWeekArchiveIfNeeded(key);
+    render();
+  }).catch(function (e) {
+    var w3 = weekGet(key);
+    w3.analyzing = false; w3.finalizing = false;
+    w3.aiError = String(e && e.message ? e.message : e);
+    markWeekDirtyAndSync(key); render();
+  });
+}
+
+/* 追问循环的核心：处理 PROBE 的返回（提交/每轮回答共用） */
+function handleProbeResponse(key, data) {
+  var w = weekGet(key);
+  w.analyzing = false;
+  if (!data || typeof data !== 'object') {
+    w.aiError = 'AI 没返回有效内容，点重试再来一次';
+    markWeekDirtyAndSync(key); render(); return;
+  }
+  w.aiError = '';
+  if (!w.probe) w.probe = {};
+  if (!Array.isArray(w.probe.feedbacks)) w.probe.feedbacks = [];
+  if (!Array.isArray(w.probe.rounds)) w.probe.rounds = [];
+  w.probe.solo = clampSolo(data.solo);
+  var note = typeof data.note === 'string' ? data.note : '';
+  var question = typeof data.question === 'string' ? data.question : '';
+  var exhausted = w.probe.rounds.length >= PROBE_MAX_ROUNDS;
+  if (data.verdict === 'pass' || exhausted) {
+    w.stage = 'probing';
+    w.probe.feedbacks.push({ note: note, q: '' });
+    finalizeWeek(key);
+  } else {
+    w.stage = 'probing';
+    w.probe.feedbacks.push({ note: note, q: question });
+    w.probe.pendingQ = question;
+    markWeekDirtyAndSync(key);
+    render();
+  }
+}
+
+function probeCall(key) {
+  var w = weekGet(key);
+  w.analyzing = true; w.aiError = '';
+  markWeekDirtyAndSync(key);
+  render();
+  callAIJson(PROBE_SYSTEM, buildWeekUserPrompt(w), 4000)
+    .then(function (res) { handleProbeResponse(key, res && res.data); })
+    .catch(function (e) {
+      var w2 = weekGet(key);
+      w2.analyzing = false;
+      w2.aiError = String(e && e.message ? e.message : e);
+      markWeekDirtyAndSync(key); render();
+    });
+}
+
+window._saveWeekDraft = function (field) {
+  var w = weekGet(curWeek);
+  var el = document.getElementById('fe_' + field);
+  if (!el) return;
+  w[field] = el.value;
+  weeksSaveDebounced();
+  var tip = document.getElementById('autosaveTip');
+  if (tip) tip.textContent = '已自动保存 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+};
+
+window._submitWeekly = function () {
+  var w = weekGet(curWeek);
+  if (w.stage !== 'draft' || w.analyzing) return;
+  if (!w.explain.trim()) {
+    showToast('第 2 部分"讲给初中生听"是重点，必须写哦');
+    var el = document.getElementById('fe_explain');
+    if (el) { el.style.borderColor = '#f87171'; setTimeout(function () { el.style.borderColor = ''; }, 1200); }
+    return;
+  }
+  probeCall(curWeek);
+};
+
+window._answerProbe = function () {
+  var w = weekGet(curWeek);
+  if (w.stage !== 'probing' || w.analyzing || w.finalizing) return;
+  var q = w.probe.pendingQ;
+  if (!q) return;
+  var el = document.getElementById('probeInput');
+  var a = el ? el.value.trim() : '';
+  if (!a) { showToast('写两句再发给教练吧'); return; }
+  w.probe.rounds.push({ q: q, a: a });
+  w.probe.pendingQ = '';
+  probeCall(curWeek);
+};
+
+window._retryWeekAI = function () {
+  var w = weekGet(curWeek);
+  if (w.analyzing || w.finalizing) return;
+  w.aiError = '';
+  weeksSave();
+  if (w.stage === 'draft') { window._submitWeekly(); return; }
+  if (w.stage === 'probing') {
+    /* 上次探针已判达标但结算失败（feedbacks 比 rounds 多一条）→ 直接重试结算，不重复追问 */
+    if (w.probe && Array.isArray(w.probe.feedbacks) && w.probe.feedbacks.length > w.probe.rounds.length) {
+      finalizeWeek(curWeek);
+      return;
+    }
+    probeCall(curWeek);
+    return;
+  }
+  render();
+};
+
+window._resetWeek = function () {
+  var w = weekGet(curWeek);
+  w.stage = 'draft';
+  w.probe = {};
+  w.result = null;
+  w.finalizing = false;
+  w.aiError = '';
+  markWeekDirtyAndSync(curWeek);
+  render();
+};
+
+/* ---------- 间隔提取（P1）：先回忆上周再写本周 ---------- */
+function maybeGenRecall() {
+  if (viewMode !== 'student' || !DEEPSEEK_URL) return;
+  var w = weekGet(curWeek);
+  if (w.stage !== 'draft') return;
+  if (w.recall.status !== 'none') return;
+  var keys = Object.keys(weeks).filter(function (k) { return weeks[k] && weeks[k].result; }).sort();
+  var prev = null;
+  for (var i = keys.length - 1; i >= 0; i--) { if (keys[i] < curWeek) { prev = weeks[keys[i]]; break; } }
+  if (!prev) return;
+  var src = '【上周所学】\n' + (prev.list || '（未填）') + '\n【上周讲解存档】\n' + (prev.result.archive || prev.explain || '（未填）');
+  w.recall.status = 'loading';
+  weeksSave();
+  render();
+  callAIJson(RECALL_GEN_SYSTEM, src, 3000).then(function (res) {
+    var w2 = weekGet(curWeek);
+    var d = res && res.data;
+    if (!d || !Array.isArray(d.questions) || !d.questions.length) {
+      w2.recall.status = 'none'; weeksSave(); render(); return;
+    }
+    w2.recall.questions = d.questions.slice(0, 2).map(function (q) { return { q: (q && q.q) || '', about: (q && q.about) || '' }; });
+    w2.recall.answers = w2.recall.questions.map(function () { return ''; });
+    w2.recall.feedback = [];
+    w2.recall.status = 'ready';
+    markWeekDirtyAndSync(curWeek);
+    render();
+  }).catch(function () {
+    var w3 = weekGet(curWeek);
+    w3.recall.status = 'none';
+    weeksSave(); render();
+  });
+}
+
+window._saveRecallAnswer = function (i) {
+  var w = weekGet(curWeek);
+  var el = document.getElementById('recall_' + i);
+  if (!el || !w.recall.answers) return;
+  w.recall.answers[i] = el.value;
+  weeksSaveDebounced();
+};
+
+window._submitRecall = function () {
+  var w = weekGet(curWeek);
+  if (w.recall.status !== 'ready' || w.analyzing) return;
+  var empty = w.recall.answers.every(function (a) { return !a || !a.trim(); });
+  if (empty) { showToast('先凭记忆答一答，想不起来就写"想不起来"'); return; }
+  w.analyzing = true;
+  weeksSave(); render();
+  var content = '上周的问题与回答：\n' + w.recall.questions.map(function (q, i) {
+    return 'Q' + (i + 1) + '（' + (q.about || '') + '）：' + q.q + '\n回答：' + ((w.recall.answers[i] || '').trim() || '（没答）');
+  }).join('\n\n');
+  callAIJson(RECALL_EVAL_SYSTEM, content, 3000).then(function (res) {
+    var w2 = weekGet(curWeek);
+    w2.analyzing = false;
+    var d = res && res.data;
+    if (!d || !Array.isArray(d.items)) {
+      w2.recall.status = 'ready'; weeksSave(); render();
+      showToast('评价没生成成功，再试一次'); return;
+    }
+    w2.recall.feedback = w2.recall.questions.map(function (_, i) {
+      var it = d.items.filter(function (x) { return x && x.idx === i; })[0];
+      if (!it) return '';
+      var tag = it.verdict === 'ok' ? '答对了 · ' : (it.verdict === 'fuzzy' ? '有点模糊 · ' : '想不起来 · ');
+      return tag + (it.feedback || '');
+    });
+    w2.recall.cheer = typeof d.cheer === 'string' ? d.cheer : '';
+    w2.recall.status = 'evaluated';
+    markWeekDirtyAndSync(curWeek);
+    render();
+  }).catch(function (e) {
+    var w3 = weekGet(curWeek);
+    w3.analyzing = false;
+    showToast('评价失败：' + (e && e.message ? e.message : e));
+    weeksSave(); render();
+  });
+};
+
+window._skipRecall = function () {
+  var w = weekGet(curWeek);
+  if (w.recall.status !== 'ready') return;
+  w.recall.status = 'evaluated';
+  w.recall.cheer = '（这次跳过了回忆练习，下次试试先答再翻书，记得更牢）';
+  markWeekDirtyAndSync(curWeek);
+  render();
+};
+
+/* ---------- 讲解存档推送 flomo + 复制 ---------- */
+function pushWeekArchiveIfNeeded(key) {
+  var w = weeks[key];
+  if (!w || !w.result || !w.result.archive || w.pushed.archive) return;
+  var range = fmtDate(key.slice(1, 9)) + '-' + fmtDate(weekEndFromKey(key));
+  var content = '📖 费曼讲解存档（' + range + ' · 深度L' + w.result.solo + '）\n' + w.result.archive + '\n' + FLOMO_TAG + '#费曼讲解';
+  pushFlomo(content).then(function (ok) {
+    if (ok) { var w2 = weeks[key]; if (w2) { w2.pushed.archive = true; weeksSave(); markWeekDirtyAndSync(key); } }
+  });
+}
+
+window._copyWeek = function () {
+  var w = weekGet(curWeek);
+  var range = fmtDate(curWeek.slice(1, 9)) + ' - ' + fmtDate(weekEndFromKey(curWeek));
+  var lines = ['📖 ' + range + ' 费曼打卡'];
+  if (w.list) lines.push('所学：' + w.list);
+  if (w.explain) lines.push('讲解：' + w.explain);
+  if (w.stuck) lines.push('卡壳：' + w.stuck);
+  if (w.result) {
+    lines.push('', '🤖 教练评价：深度 L' + w.result.solo + '（' + (SOLO_LABEL[w.result.solo] || '') + '）');
+    if (w.result.praise) lines.push(w.result.praise);
+    if (w.result.archive) lines.push('', '📌 讲解存档：' + w.result.archive);
+  }
+  copyText(lines.join('\n'));
 };
 
 /* 每完成一科就分析：只要有已完成的笔记即触发；分析进行中又来新笔记则标记待补，跑完自动再跑一次 */
@@ -1370,6 +1901,38 @@ window._toggleConfig = function () {
   if (card) card.classList.toggle('open');
 };
 
+function renderWeeklyPanel() {
+  var keys = Object.keys(weeks).filter(function (k) { return weeks[k] && weeks[k].result; }).sort();
+  var h = '<div class="stat-card"><h3>' + icon('star') + '费曼讲解集（周打卡）</h3>';
+  if (!keys.length) {
+    h += '<div class="review-empty" style="padding:30px 20px;">' + icon('book') +
+      '<br><b style="color:var(--text);font-size:15px;">还没有周打卡记录</b><br>' +
+      '她完成周末打卡后，讲解存档和深度评级会出现在这里' +
+      '<br><span style="font-size:12.5px;color:var(--sub);">深度等级：L1 单点 → L2 多点 → L3 关联 → L4 拓展</span></div>';
+  } else {
+    var recent = keys.slice(-10);
+    h += '<div class="admin-note">讲解深度变化（L1 单点 → L2 多点 → L3 关联 → L4 拓展）</div>';
+    h += '<div class="depth-curve">';
+    recent.forEach(function (k) {
+      var s = clampSolo(weeks[k].result.solo);
+      h += '<div class="dcol"><div class="dnum">L' + s + '</div><div class="dbar s' + s + '" style="height:' + Math.round((s / 4) * 100) + '%"></div><div class="dlab">' + k.slice(5, 7) + '/' + k.slice(7, 9) + '</div></div>';
+    });
+    h += '</div>';
+    h += '<div style="margin-top:14px;">';
+    keys.slice().reverse().forEach(function (k) {
+      var w = weeks[k], r = w.result;
+      var range = fmtDate(k.slice(1, 9)) + ' - ' + fmtDate(weekEndFromKey(k));
+      h += '<div class="archive-item">';
+      h += '<div class="a-head">' + starsHtml(r.solo) + '<b style="font-size:13.5px;">' + range + '</b><span class="solo-tag">L' + r.solo + ' · ' + (SOLO_LABEL[r.solo] || '') + '</span></div>';
+      h += '<details class="a-box"><summary>展开讲解存档</summary><div class="a-body">' + escapeHtml(r.archive || '（无存档）') + '</div></details>';
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
 function renderAdmin(app) {
   var d = dayGet(curDate);
   var doneCnt = completedCount(curDate);
@@ -1421,8 +1984,9 @@ function renderAdmin(app) {
 
   h += '</div>';   /* end admin-grid */
 
-  /* 底部通栏：最近 7 天 + 说明 + 配置云端 */
+  /* 底部通栏：费曼讲解集 + 最近 7 天 + 说明 + 配置云端 */
   h += '<div class="admin-full">';
+  h += renderWeeklyPanel();
   h += '<div class="stat-card"><h3>' + icon('calendar') + '最近 7 天打卡进度</h3><div class="week-chart">';
   for (var i = 6; i >= 0; i--) {
     var dt = new Date(); dt.setDate(dt.getDate() - i);
@@ -1450,10 +2014,11 @@ function renderAdmin(app) {
   h += '<div class="admin-note">连接云端后，这里显示所有设备的打卡记录（学生端打卡会自动同步过来）。未连接云端时只显示本机浏览器保存的数据。</div></div>';
 
   h += '<div class="card"><div style="font-weight:700;font-size:14px;margin-bottom:10px;">📖 使用说明</div><div class="admin-note">';
-  h += '· 数据保存在使用设备的本地，离线也能用<br>';
-  h += '· 完成 2 科以上 = 今日达标（绿色火焰图标）<br>';
-  h += '· 每科打卡必须先写"学到了什么"，AI 会自动读笔记给反馈<br>';
-  h += '· 右边审核面板可标记已审，已审状态同步到云端';
+  h += '· 学生端已切换为<b>每周费曼打卡</b>：三段式输入（所学清单 / 讲给初中生听 / 卡壳点）→ AI 按深度分级追问（最多 3 轮）→ 生成评级与讲解存档<br>';
+  h += '· 每次打卡前 AI 会从上周存档出 1-2 道回忆题（间隔提取），她跳过也没关系<br>';
+  h += '· 下方"费曼讲解集"看她的讲解存档和深度变化曲线，L3 以上算真正讲明白了<br>';
+  h += '· 打卡输入自动保存草稿（本地+云端），周五晚写一半周末接着写也行<br>';
+  h += '· 历史每日打卡记录仍保留在上面的打卡数据库里，可继续审核';
   h += '</div></div>';
 
   var curCfg = getCloudCfg();
@@ -1527,12 +2092,14 @@ window._clearCloudCfg = function () {
 /* ================= 启动 ================= */
 (function init() {
   loadAll();
+  loadWeeks();
   var p = new URLSearchParams(window.location.search);
   var d = p.get('d'), m = p.get('m');
   viewMode = p.has('s') ? 'student' : 'admin';
   if (d && d.length === 8 && /^\d{8}$/.test(d)) curDate = d;
   curMode = (m && MODES[m]) ? m : defaultMode(curDate);
   dayGet(curDate);
+  if (viewMode === 'student') curWeek = weekKeyFor(curDate);
 
   // 弹窗按钮事件绑定（静态 HTML，只需绑一次）
   var saveBtn = document.getElementById('modalSaveBtn');
@@ -1542,16 +2109,25 @@ window._clearCloudCfg = function () {
 
   render();
 
-  // 跨天自动切日期
+  // 跨天自动切日期（跨周时学生端同步切周）
   setInterval(function () {
     var t = todayStr();
-    if (t !== curDate) { curDate = t; dayGet(curDate); render(); flushDirtyLocal(); }
+    if (t !== curDate) {
+      curDate = t; dayGet(curDate);
+      if (viewMode === 'student') curWeek = weekKeyFor(t);
+      render(); flushDirtyLocal(); flushDirtyWeeks();
+    }
   }, 60000);
 
-  // 每次打开：补推未同步的打卡，并自动触发 AI 分析
-  var day = dayGet(curDate);
-  day.tasks.forEach(function (t, i) { pushNoteIfNeeded(curDate, i); });
-  if (DEEPSEEK_URL) maybeAnalyze(curDate, false);
+  if (viewMode === 'admin') {
+    // 管理端：补推未同步的每日打卡，并自动触发 AI 分析（历史每日数据）
+    var day = dayGet(curDate);
+    day.tasks.forEach(function (t, i) { pushNoteIfNeeded(curDate, i); });
+    if (DEEPSEEK_URL) maybeAnalyze(curDate, false);
+  } else {
+    // 学生端：离线时也先试生成回忆题（有本地上周存档即可）
+    maybeGenRecall();
+  }
 
   // 云端初始化（可选，REST 直连无需外部 SDK）
   var cfg = getCloudCfg();
@@ -1561,6 +2137,8 @@ window._clearCloudCfg = function () {
     cloudReady = true;
     syncPullAll().then(function () {
       flushDirtyLocal();
+      flushDirtyWeeks();
+      maybeGenRecall();   /* 云端拉到上周存档后补生成回忆题 */
     });
   }
 })();
